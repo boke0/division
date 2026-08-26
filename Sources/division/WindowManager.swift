@@ -200,6 +200,17 @@ final class WindowManager {
         axWindow(id) != nil
     }
 
+    /// True when AX reports the window size is not settable (dialogs, palettes, fixed-size popups).
+    func isFloatingWindow(_ id: WindowID) -> Bool {
+        guard let (element, _) = axWindow(id) else { return false }
+        var settable: DarwinBoolean = true
+        let status = AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable)
+        if status != .success {
+            return false
+        }
+        return !settable.boolValue
+    }
+
     func visibleFrame(containing cocoaFrame: CGRect) -> CGRect {
         let screen = NSScreen.screens.first { $0.frame.intersects(cocoaFrame) }
             ?? NSScreen.main

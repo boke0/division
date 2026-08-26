@@ -85,7 +85,7 @@ final class SwitcherPanelController: NSObject {
         activePane = engine.switcherPane()
         model.reload(from: engine, pane: activePane)
         model.resetInput()
-        centerOnActiveScreen()
+        centerOnActivePane()
         panel.orderFrontRegardless()
         panel.makeKeyAndOrderFront(nil)
         startEventMonitor()
@@ -118,14 +118,17 @@ final class SwitcherPanelController: NSObject {
         hide()
     }
 
-    private func centerOnActiveScreen() {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        guard let visible = screen?.visibleFrame else { return }
+    private func centerOnActivePane() {
+        let pane = engine.paneFrame(activePane)
         let size = panel.frame.size
-        let origin = NSPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.midY - size.height / 2 + 80
+        var origin = NSPoint(
+            x: pane.midX - size.width / 2,
+            y: pane.midY - size.height / 2
         )
+        // Panes narrower than the panel would push it off screen; keep it visible.
+        let visible = engine.windowManager.visibleFrame(containing: pane)
+        origin.x = min(max(origin.x, visible.minX), visible.maxX - size.width)
+        origin.y = min(max(origin.y, visible.minY), visible.maxY - size.height)
         panel.setFrameOrigin(origin)
     }
 

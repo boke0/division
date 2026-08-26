@@ -80,6 +80,14 @@ final class TilingEngine {
         return resolvedPane(in: state, focused: windowManager.focusedWindow())
     }
 
+    /// Cocoa-coordinate frame of the pane in the current layout, using the same
+    /// bounds resolution as `switcherPane()`.
+    func paneFrame(_ pane: Int) -> CGRect {
+        let layout = currentLayout()
+        let bounds = tilingBounds(for: windowManager.focusedWindow()?.frame)
+        return layout.paneFrames(in: bounds)[layout.clampedPane(pane)]
+    }
+
     func handleAction(_ action: HotkeyAction) {
         switch action {
         case .cycleLayout:
@@ -250,6 +258,10 @@ final class TilingEngine {
 
     func noteWindowCreated(_ id: WindowID) {
         guard windowManager.window(id: id) != nil else { return }
+        if windowManager.isFloatingWindow(id) {
+            DivisionLog.event("window created skipped: floating id=\(id.rawValue)")
+            return
+        }
         guard let space = currentSpaceID() else { return }
         pruneGone(space)
         store.update(space) { state in
@@ -320,9 +332,10 @@ final class TilingEngine {
     private func adoptUnseenOnScreen(_ space: SpaceID) {
         let live = currentSpaceWindows()
         let bounds = tilingBounds(for: windowManager.focusedWindow()?.frame ?? live.first?.frame)
+        let adoptable = live.filter { !windowManager.isFloatingWindow($0.id) }
         store.update(space) { state in
             state.adoptUnseenWindows(
-                live.map { (id: $0.id, center: CGPoint(x: $0.frame.midX, y: $0.frame.midY)) },
+                adoptable.map { (id: $0.id, center: CGPoint(x: $0.frame.midX, y: $0.frame.midY)) },
                 bounds: bounds
             )
         }
