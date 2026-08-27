@@ -3,10 +3,18 @@ import Testing
 @testable import DivisionKit
 
 @Test func paneCounts() {
+    #expect(Layout.full.paneCount == 1)
     #expect(Layout.half.paneCount == 2)
     #expect(Layout.oneTwo.paneCount == 2)
     #expect(Layout.twoOne.paneCount == 2)
     #expect(Layout.thirds.paneCount == 3)
+}
+
+@Test func fullFramesFillBounds() {
+    let bounds = CGRect(x: 100, y: 50, width: 1200, height: 800)
+    let frames = Layout.full.paneFrames(in: bounds)
+    #expect(frames.count == 1)
+    #expect(frames[0] == bounds)
 }
 
 @Test func halfFramesSplitEvenly() {
@@ -47,6 +55,8 @@ import Testing
 }
 
 @Test func adjacentPaneHorizontal() {
+    #expect(Layout.full.adjacentPane(from: 0, direction: .left) == nil)
+    #expect(Layout.full.adjacentPane(from: 0, direction: .right) == nil)
     #expect(Layout.half.adjacentPane(from: 0, direction: .right) == 1)
     #expect(Layout.half.adjacentPane(from: 1, direction: .left) == 0)
     #expect(Layout.half.adjacentPane(from: 0, direction: .left) == nil)
@@ -56,6 +66,7 @@ import Testing
 }
 
 @Test func adjacentPaneVerticalIsNil() {
+    #expect(Layout.full.adjacentPane(from: 0, direction: .up) == nil)
     #expect(Layout.half.adjacentPane(from: 0, direction: .up) == nil)
     #expect(Layout.half.adjacentPane(from: 1, direction: .down) == nil)
     #expect(Layout.thirds.adjacentPane(from: 1, direction: .up) == nil)
@@ -75,6 +86,9 @@ import Testing
 }
 
 @Test func clampedPane() {
+    #expect(Layout.full.clampedPane(-1) == 0)
+    #expect(Layout.full.clampedPane(0) == 0)
+    #expect(Layout.full.clampedPane(1) == 0)
     #expect(Layout.half.clampedPane(-1) == 0)
     #expect(Layout.half.clampedPane(0) == 0)
     #expect(Layout.half.clampedPane(1) == 1)
@@ -84,8 +98,9 @@ import Testing
 }
 
 @Test func cycleLayout() {
+    #expect(Layout.full.next() == .half)
     #expect(Layout.half.next() == .oneTwo)
     #expect(Layout.oneTwo.next() == .twoOne)
     #expect(Layout.twoOne.next() == .thirds)
-    #expect(Layout.thirds.next() == .half)
+    #expect(Layout.thirds.next() == .full)
 }

@@ -88,6 +88,18 @@ private let w4 = WindowID(4)
     #expect(state.pane(for: w3) == 1)
 }
 
+@Test func layoutChangeToFullClampsAllPanesToZero() {
+    var state = WorkspaceState(layout: .thirds)
+    state.mark(w1, pane: 0)
+    state.mark(w2, pane: 1)
+    state.mark(w3, pane: 2)
+    state.setLayout(.full)
+    #expect(state.layout == .full)
+    #expect(state.pane(for: w1) == 0)
+    #expect(state.pane(for: w2) == 0)
+    #expect(state.pane(for: w3) == 0)
+}
+
 @Test func paneForNewWindowUsesLastFocusedMarkedPane() {
     var state = WorkspaceState(defaultPane: 0)
     state.mark(w1, pane: 1)
@@ -300,6 +312,54 @@ private let w4 = WindowID(4)
     #expect(state.order == [w3, w2, w1, w4])
     #expect(state.switcherCandidates(in: 0) == [w3, w1])
     #expect(state.switcherCandidates(in: 1) == [w2, w4])
+}
+
+@Test func focusTargetPreferringPaneFallsBackAcrossSpace() {
+    var state = WorkspaceState(layout: .half)
+    state.mark(w1, pane: 0)
+    state.mark(w2, pane: 1)
+    state.recordFocus(w2)
+    #expect(state.focusTargetPreferringPane(0) == w1)
+    #expect(state.focusTargetPreferringPane(1) == w2)
+    state.unmark(w1)
+    #expect(state.focusTargetPreferringPane(0) == w2)
+}
+
+@Test func storeTransferMovesWindowBetweenSpaces() {
+    var store = WorkspaceStore(defaultLayout: .half)
+    let source = SpaceID(1)
+    let dest = SpaceID(2)
+    store.update(source) {
+        $0.mark(w1, pane: 0)
+        $0.mark(w2, pane: 1)
+        $0.recordFocus(w1)
+    }
+    store.update(dest) { $0.setLayout(.thirds) }
+    store.transfer(w1, from: source, to: dest, pane: 2)
+
+    let sourceState = store.state(for: source)
+    let destState = store.state(for: dest)
+    #expect(sourceState.pane(for: w1) == nil)
+    #expect(sourceState.order == [w2])
+    #expect(sourceState.lastFocusedMarkedWindow == nil)
+    #expect(destState.pane(for: w1) == 2)
+    #expect(destState.order == [w1])
+    #expect(destState.lastFocusedMarkedWindow == w1)
+    #expect(destState.lastFocusedByPane[2] == w1)
+}
+
+@Test func storeTransferSameSpaceOnlyChangesPane() {
+    var store = WorkspaceStore(defaultLayout: .thirds)
+    let space = SpaceID(3)
+    store.update(space) {
+        $0.mark(w1, pane: 0)
+        $0.mark(w2, pane: 1)
+    }
+    store.transfer(w1, from: space, to: space, pane: 2)
+    let state = store.state(for: space)
+    #expect(state.pane(for: w1) == 2)
+    #expect(state.order == [w1, w2])
+    #expect(state.lastFocusedMarkedWindow == w1)
 }
 
 @Test func storeCreatesStateWithDefaultsAndPersistsLayouts() {

@@ -139,15 +139,23 @@ final class TilingEngine {
             toPane = state.pane(for: focused.id) ?? fromPane
             state.recordFocus(focused.id)
         }
-        if !moved {
-            DivisionLog.event(
-                "move skipped: no adjacent pane window=\(focused.id.rawValue) from=\(fromPane) direction=\(direction)"
-            )
-        } else {
+        if moved {
             DivisionLog.event(
                 "move window=\(focused.id.rawValue) from=\(fromPane) to=\(toPane) direction=\(direction)"
             )
+            persist()
+            retile(space)
+            notify()
+            return
         }
+        if moveAcrossDisplay(focused, from: space, fromPane: fromPane, direction: direction) {
+            persist()
+            notify()
+            return
+        }
+        DivisionLog.event(
+            "move skipped: no adjacent pane window=\(focused.id.rawValue) from=\(fromPane) direction=\(direction)"
+        )
         persist()
         retile(space)
         notify()
@@ -161,38 +169,42 @@ final class TilingEngine {
         pruneGone(space)
         let resolution = windowManager.resolveFocusedWindow()
         let focused = resolution.window
-        var target: WindowID?
-        var currentPane = -1
-        var nextPane = -1
-        var skipReason: String?
-        var occupancy = ""
-        store.update(space) { state in
-            occupancy = Self.occupancyDescription(state)
-            currentPane = resolvedPane(in: state, focused: focused)
-            guard let adjacent = state.layout.adjacentPane(from: currentPane, direction: direction) else {
-                skipReason = "focus skipped: no adjacent pane from=\(currentPane) direction=\(direction) layout=\(state.layout) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil")"
-                return
-            }
-            nextPane = adjacent
-            target = state.focusTarget(in: nextPane)
-            if let target {
-                state.recordFocus(target)
-            } else {
-                skipReason = "focus skipped: no window in target pane=\(nextPane) assigned=\(state.order.count) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil") from=\(currentPane)"
-            }
-        }
+        let sourceState = store.state(for: space)
+        let currentPane = resolvedPane(in: sourceState, focused: focused)
+        let occupancy = Self.occupancyDescription(sourceState)
+        let neighbor = neighboringDestination(from: spaceScreen(), direction: direction)
         DivisionLog.event(
-            "focus begin direction=\(direction) from=\(currentPane) next=\(nextPane) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil") workspaceFrontmost=\(resolution.workspaceFrontmost) axSystemApp=\(resolution.axSystemApp) snapshotAX=\(resolution.snapshotAX)"
+            "focus begin direction=\(direction) from=\(currentPane) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil") workspaceFrontmost=\(resolution.workspaceFrontmost) axSystemApp=\(resolution.axSystemApp) snapshotAX=\(resolution.snapshotAX)"
         )
-        if let skipReason {
-            DivisionLog.event(skipReason)
-        }
-        if let target {
-            if windowManager.raise(target) {
-                DivisionLog.event("focus raised window=\(target.rawValue) direction=\(direction) pane=\(nextPane)")
-            } else {
-                DivisionLog.event("focus raise failed window=\(target.rawValue) direction=\(direction) pane=\(nextPane)")
-            }
+        switch resolveNavigationTarget(
+            fromPane: currentPane,
+            layout: sourceState.layout,
+            direction: direction,
+            neighborLayout: neighbor?.layout
+        ) {
+        case .pane(let nextPane):
+            raiseFocusTarget(
+                in: space,
+                pane: nextPane,
+                preferringSpaceFallback: false,
+                direction: direction,
+                occupancy: occupancy,
+                focused: focused
+            )
+        case .neighbor(let destPane):
+            guard let neighbor else { break }
+            raiseFocusTarget(
+                in: neighbor.space,
+                pane: destPane,
+                preferringSpaceFallback: true,
+                direction: direction,
+                occupancy: occupancy,
+                focused: focused
+            )
+        case nil:
+            DivisionLog.event(
+                "focus skipped: no adjacent pane from=\(currentPane) direction=\(direction) layout=\(sourceState.layout) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil")"
+            )
         }
         notify()
     }
@@ -294,11 +306,12 @@ final class TilingEngine {
         retile(space)
     }
 
-    private func retile(_ space: SpaceID) {
+    private func retile(_ space: SpaceID, on screen: NSScreen? = nil) {
         pruneGone(space)
-        let live = currentSpaceWindows()
+        let targetScreen = screen ?? spaceScreen()
+        let live = windowsOnScreen(targetScreen)
         let liveIDs = Set(live.map(\.id))
-        let bounds = tilingBounds(for: windowManager.focusedWindow()?.frame ?? live.first?.frame)
+        let bounds = windowManager.visibleFrame(for: targetScreen)
         let state = store.state(for: space)
         let frames = state.layout.paneFrames(in: bounds)
         DivisionLog.event(
@@ -317,6 +330,114 @@ final class TilingEngine {
                 DivisionLog.event("setFrame failed window=\(windowID.rawValue) pane=\(pane) frame=\(frames[pane])")
             }
         }
+    }
+
+    private func raiseFocusTarget(
+        in space: SpaceID,
+        pane: Int,
+        preferringSpaceFallback: Bool,
+        direction: Direction,
+        occupancy: String,
+        focused: ManagedWindow?
+    ) {
+        pruneGone(space)
+        var target: WindowID?
+        store.update(space) { state in
+            target = preferringSpaceFallback
+                ? state.focusTargetPreferringPane(pane)
+                : state.focusTarget(in: pane)
+            if let target {
+                state.recordFocus(target)
+            }
+        }
+        guard let target else {
+            DivisionLog.event(
+                "focus skipped: no window in target pane=\(pane) space=\(space.rawValue) assigned fallback=\(preferringSpaceFallback) occupancy=\(occupancy) focused=\(focused.map { "\($0.id.rawValue) \($0.appName)" } ?? "nil")"
+            )
+            return
+        }
+        if windowManager.raise(target) {
+            DivisionLog.event(
+                "focus raised window=\(target.rawValue) direction=\(direction) pane=\(pane) space=\(space.rawValue)"
+            )
+        } else {
+            DivisionLog.event(
+                "focus raise failed window=\(target.rawValue) direction=\(direction) pane=\(pane) space=\(space.rawValue)"
+            )
+        }
+    }
+
+    @discardableResult
+    private func moveAcrossDisplay(
+        _ focused: ManagedWindow,
+        from space: SpaceID,
+        fromPane: Int,
+        direction: Direction
+    ) -> Bool {
+        guard let dest = neighboringDestination(from: spaceScreen(), direction: direction) else {
+            return false
+        }
+        let sourceLayout = store.state(for: space).layout
+        let destPane = landingPane(
+            direction: direction,
+            sourceLayout: sourceLayout,
+            sourcePane: fromPane,
+            destinationLayout: dest.layout
+        )
+        store.transfer(focused.id, from: space, to: dest.space, pane: destPane)
+        if space != dest.space {
+            let moved = PrivateAPI.moveWindow(focused.id.rawValue, toSpace: dest.space.rawValue)
+            DivisionLog.event(
+                "move window to space issued=\(moved) window=\(focused.id.rawValue) fromSpace=\(space.rawValue) toSpace=\(dest.space.rawValue)"
+            )
+        }
+        let destBounds = windowManager.visibleFrame(for: dest.screen)
+        let destFrames = store.state(for: dest.space).layout.paneFrames(in: destBounds)
+        if destFrames.indices.contains(destPane) {
+            if !windowManager.setFrame(focused.id, destFrames[destPane]) {
+                DivisionLog.event(
+                    "move across display setFrame failed window=\(focused.id.rawValue) pane=\(destPane) frame=\(destFrames[destPane])"
+                )
+            }
+        }
+        retile(dest.space, on: dest.screen)
+        if windowManager.raise(focused.id) {
+            DivisionLog.event(
+                "move window=\(focused.id.rawValue) across display from=\(fromPane) to=\(destPane) direction=\(direction) space=\(dest.space.rawValue)"
+            )
+        } else {
+            DivisionLog.event(
+                "move across display raise failed window=\(focused.id.rawValue) pane=\(destPane) space=\(dest.space.rawValue)"
+            )
+        }
+        return true
+    }
+
+    private func neighboringDestination(
+        from screen: NSScreen?,
+        direction: Direction
+    ) -> (screen: NSScreen, space: SpaceID, layout: Layout)? {
+        guard let destScreen = neighboringScreen(from: screen, direction: direction) else {
+            return nil
+        }
+        guard let destSpace = spaceTracker.currentSpaceID(for: destScreen) else {
+            return nil
+        }
+        pruneGone(destSpace)
+        return (destScreen, destSpace, store.state(for: destSpace).layout)
+    }
+
+    private func neighboringScreen(from screen: NSScreen?, direction: Direction) -> NSScreen? {
+        guard let screen else { return nil }
+        let screens = NSScreen.screens
+        guard let index = adjacentFrameIndex(
+            from: screen.frame,
+            among: screens.map(\.frame),
+            direction: direction
+        ) else {
+            return nil
+        }
+        return screens[index]
     }
 
     private func pruneGone(_ space: SpaceID) {
@@ -341,8 +462,12 @@ final class TilingEngine {
     }
 
     private func currentSpaceWindows() -> [ManagedWindow] {
+        windowsOnScreen(spaceScreen())
+    }
+
+    private func windowsOnScreen(_ screen: NSScreen?) -> [ManagedWindow] {
         let onScreen = onScreenWindowIDs()
-        let screenFrame = spaceScreen()?.frame
+        let screenFrame = screen?.frame
         return windowManager.allWindows().filter { window in
             guard onScreen.contains(window.id) else { return false }
             guard let screenFrame else { return true }

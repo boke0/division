@@ -115,6 +115,18 @@ public struct WorkspaceState: Equatable, Sendable {
         return leadingWindow(in: pane)
     }
 
+    /// `focusTarget(in:)` if that pane has a window; otherwise the space's last
+    /// focused assigned window, then the first assigned window.
+    public func focusTargetPreferringPane(_ pane: Int) -> WindowID? {
+        if let target = focusTarget(in: pane) {
+            return target
+        }
+        if let last = lastFocusedMarkedWindow, marks[last] != nil {
+            return last
+        }
+        return order.first
+    }
+
     public mutating func mark(_ window: WindowID, pane: Int) {
         let pane = layout.clampedPane(pane)
         if marks[window] == nil {
@@ -313,6 +325,28 @@ public struct WorkspaceStore: Equatable, Sendable {
             guard let raw = UInt64(key) else { continue }
             let space = SpaceID(raw)
             update(space) { $0.setLayout(layout) }
+        }
+    }
+
+    /// Moves `window` onto `pane` of `dest`. When the spaces differ, it is
+    /// unmarked on `source` first. Same-space transfers only change the pane.
+    public mutating func transfer(
+        _ window: WindowID,
+        from source: SpaceID,
+        to dest: SpaceID,
+        pane: Int
+    ) {
+        if source == dest {
+            update(dest) { state in
+                state.moveToPane(window, pane: pane)
+                state.recordFocus(window)
+            }
+            return
+        }
+        update(source) { $0.unmark(window) }
+        update(dest) { state in
+            state.mark(window, pane: pane)
+            state.recordFocus(window)
         }
     }
 }

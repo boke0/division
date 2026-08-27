@@ -3,6 +3,8 @@ import Foundation
 
 /// Horizontal column layouts available per workspace.
 public enum Layout: String, Codable, Equatable, Sendable, CaseIterable {
+    /// Single full-screen pane.
+    case full
     /// 1:1 split into two equal columns.
     case half
     /// 1:2 split (left third, right two-thirds).
@@ -14,6 +16,8 @@ public enum Layout: String, Codable, Equatable, Sendable, CaseIterable {
 
     public var paneCount: Int {
         switch self {
+        case .full:
+            return 1
         case .half, .oneTwo, .twoOne:
             return 2
         case .thirds:
@@ -24,6 +28,8 @@ public enum Layout: String, Codable, Equatable, Sendable, CaseIterable {
     /// Relative widths of each pane from left to right. Sums to 1.
     public var ratios: [CGFloat] {
         switch self {
+        case .full:
+            return [1.0]
         case .half:
             return [0.5, 0.5]
         case .oneTwo:
@@ -37,6 +43,8 @@ public enum Layout: String, Codable, Equatable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
+        case .full:
+            return "1"
         case .half:
             return "1:1"
         case .oneTwo:
