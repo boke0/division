@@ -199,10 +199,11 @@ private let w4 = WindowID(4)
     state.mark(w1, pane: 0)
     state.mark(w2, pane: 0)
     state.mark(w3, pane: 1)
-    #expect(state.candidates(forPane: 0, unassigned: [w4]) == [w1, w2, w4])
-    #expect(state.candidates(forPane: 1, unassigned: [w4]) == [w3, w4])
-    #expect(!state.candidates(forPane: 0, unassigned: [w4]).contains(w3))
-    #expect(state.candidates(forPane: 0, unassigned: [w3, w4]) == [w1, w2, w4])
+    let present: Set<WindowID> = [w1, w2, w3, w4]
+    #expect(state.candidates(forPane: 0, unassigned: [w4], present: present) == [w1, w2, w4])
+    #expect(state.candidates(forPane: 1, unassigned: [w4], present: present) == [w3, w4])
+    #expect(!state.candidates(forPane: 0, unassigned: [w4], present: present).contains(w3))
+    #expect(state.candidates(forPane: 0, unassigned: [w3, w4], present: present) == [w1, w2, w4])
 }
 
 @Test func confirmingUnassignedWindowAssignsToCurrentPane() {
@@ -210,17 +211,18 @@ private let w4 = WindowID(4)
     state.mark(w1, pane: 0)
     state.mark(w2, pane: 0)
     state.mark(w3, pane: 1)
-    #expect(state.candidates(forPane: 0, unassigned: [w4]) == [w1, w2, w4])
+    let present: Set<WindowID> = [w1, w2, w3, w4]
+    #expect(state.candidates(forPane: 0, unassigned: [w4], present: present) == [w1, w2, w4])
 
     state.mark(w4, pane: 0)
 
     #expect(state.pane(for: w4) == 0)
     #expect(state.windows(in: 0) == [w1, w2, w4])
-    #expect(state.candidates(forPane: 0, unassigned: []).contains(w4))
-    #expect(state.candidates(forPane: 0, unassigned: []) == [w1, w2, w4])
-    #expect(state.candidates(forPane: 0, unassigned: [w4]) == [w1, w2, w4])
-    #expect(state.candidates(forPane: 1, unassigned: [w4]) == [w3])
-    #expect(!state.candidates(forPane: 1, unassigned: [w4]).contains(w4))
+    #expect(state.candidates(forPane: 0, unassigned: [], present: present).contains(w4))
+    #expect(state.candidates(forPane: 0, unassigned: [], present: present) == [w1, w2, w4])
+    #expect(state.candidates(forPane: 0, unassigned: [w4], present: present) == [w1, w2, w4])
+    #expect(state.candidates(forPane: 1, unassigned: [w4], present: present) == [w3])
+    #expect(!state.candidates(forPane: 1, unassigned: [w4], present: present).contains(w4))
 }
 
 @Test func adoptUnseenUsesPaneUnderCenter() {
@@ -242,8 +244,18 @@ private let w4 = WindowID(4)
 @Test func emptyPaneCandidatesAreUnassignedOnly() {
     var state = WorkspaceState()
     state.mark(w3, pane: 1)
-    #expect(state.candidates(forPane: 0, unassigned: [w4]) == [w4])
-    #expect(state.candidates(forPane: 0, unassigned: [w3, w4]) == [w4])
+    let present: Set<WindowID> = [w3, w4]
+    #expect(state.candidates(forPane: 0, unassigned: [w4], present: present) == [w4])
+    #expect(state.candidates(forPane: 0, unassigned: [w3, w4], present: present) == [w4])
+}
+
+@Test func candidatesOmitAssignedWindowsNotPresent() {
+    var state = WorkspaceState()
+    state.mark(w1, pane: 0)
+    state.mark(w2, pane: 0)
+    let present: Set<WindowID> = [w1, w4]
+    #expect(state.candidates(forPane: 0, unassigned: [w4], present: present) == [w1, w4])
+    #expect(!state.candidates(forPane: 0, unassigned: [w4], present: present).contains(w2))
 }
 
 @Test func switcherPaneUsesMarkedWindowPane() {

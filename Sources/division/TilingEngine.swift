@@ -31,13 +31,7 @@ final class TilingEngine {
     }
 
     func currentSpaceID() -> SpaceID? {
-        let screen: NSScreen?
-        if let focused = windowManager.focusedWindow() {
-            screen = screenContaining(focused.frame)
-        } else {
-            screen = NSScreen.main
-        }
-        return spaceTracker.currentSpaceID(for: screen)
+        spaceTracker.currentSpaceID(for: spaceScreen())
     }
 
     /// Falls back so layout/switcher hotkeys still have a workspace when CGS lookup fails.
@@ -61,12 +55,17 @@ final class TilingEngine {
         pruneGone(space)
         let live = currentSpaceWindows()
         let state = store.state(for: space)
+        let present = Set(live.map(\.id))
         let unassigned = live
             .filter { state.pane(for: $0.id) == nil }
             .sorted(by: Self.unassignedSort)
-        let ids = state.candidates(forPane: pane, unassigned: unassigned.map(\.id))
+        let ids = state.candidates(
+            forPane: pane,
+            unassigned: unassigned.map(\.id),
+            present: present
+        )
         let byID = Dictionary(uniqueKeysWithValues: live.map { ($0.id, $0) })
-        return ids.compactMap { byID[$0] ?? windowManager.window(id: $0) }
+        return ids.compactMap { byID[$0] }
     }
 
     func paneIndex(for windowID: WindowID) -> Int? {
@@ -298,16 +297,16 @@ final class TilingEngine {
     private func retile(_ space: SpaceID) {
         pruneGone(space)
         let live = currentSpaceWindows()
+        let liveIDs = Set(live.map(\.id))
         let bounds = tilingBounds(for: windowManager.focusedWindow()?.frame ?? live.first?.frame)
         let state = store.state(for: space)
         let frames = state.layout.paneFrames(in: bounds)
-        let onScreen = onScreenWindowIDs()
         DivisionLog.event(
-            "retile space=\(space.rawValue) assigned=\(state.order.count) live=\(live.count) bounds=\(bounds) onScreen=\(onScreen.count)"
+            "retile space=\(space.rawValue) assigned=\(state.order.count) live=\(live.count) bounds=\(bounds)"
         )
         for windowID in state.order {
-            guard onScreen.contains(windowID) || windowManager.exists(windowID) else {
-                DivisionLog.event("retile skipped window=\(windowID.rawValue) not on screen and exists=false")
+            guard liveIDs.contains(windowID) else {
+                DivisionLog.event("retile skipped window=\(windowID.rawValue) not on current space")
                 continue
             }
             guard let pane = state.pane(for: windowID), frames.indices.contains(pane) else {
@@ -343,7 +342,12 @@ final class TilingEngine {
 
     private func currentSpaceWindows() -> [ManagedWindow] {
         let onScreen = onScreenWindowIDs()
-        return windowManager.allWindows().filter { onScreen.contains($0.id) }
+        let screenFrame = spaceScreen()?.frame
+        return windowManager.allWindows().filter { window in
+            guard onScreen.contains(window.id) else { return false }
+            guard let screenFrame else { return true }
+            return screenFrame.contains(CGPoint(x: window.frame.midX, y: window.frame.midY))
+        }
     }
 
     private static func unassignedSort(_ lhs: ManagedWindow, _ rhs: ManagedWindow) -> Bool {
@@ -387,8 +391,18 @@ final class TilingEngine {
         return windowManager.visibleFrame(for: NSScreen.main)
     }
 
+    private func spaceScreen() -> NSScreen? {
+        if let focused = windowManager.focusedWindow() {
+            return screenContaining(focused.frame)
+        }
+        return NSScreen.main
+    }
+
     private func screenContaining(_ frame: CGRect) -> NSScreen? {
-        NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        return NSScreen.screens.first { $0.frame.contains(center) }
+            ?? NSScreen.screens.first { $0.frame.intersects(frame) }
+            ?? NSScreen.main
     }
 
     private func onScreenWindowIDs() -> Set<WindowID> {

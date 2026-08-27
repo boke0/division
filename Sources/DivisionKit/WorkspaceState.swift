@@ -66,14 +66,19 @@ public struct WorkspaceState: Equatable, Sendable {
         windows(in: pane)
     }
 
-    /// Switcher rows for `pane`: assigned windows in order, then `unassigned`
-    /// windows that are not assigned to any pane. Windows already belonging to
-    /// another pane are omitted even if they appear in `unassigned`.
-    public func candidates(forPane pane: Int, unassigned: [WindowID]) -> [WindowID] {
-        let assigned = windows(in: pane)
+    /// Switcher rows for `pane`: assigned windows in order that are also in
+    /// `present`, then `unassigned` windows that are not assigned to any pane
+    /// and are in `present`. Windows already belonging to another pane are
+    /// omitted even if they appear in `unassigned`.
+    public func candidates(
+        forPane pane: Int,
+        unassigned: [WindowID],
+        present: Set<WindowID>
+    ) -> [WindowID] {
+        let assigned = windows(in: pane).filter { present.contains($0) }
         var seen = Set(assigned)
         var result = assigned
-        for id in unassigned where marks[id] == nil {
+        for id in unassigned where marks[id] == nil && present.contains(id) {
             if seen.insert(id).inserted {
                 result.append(id)
             }
