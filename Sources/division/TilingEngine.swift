@@ -441,8 +441,9 @@ final class TilingEngine {
     }
 
     private func pruneGone(_ space: SpaceID) {
+        let manageable = Set(windowManager.allWindows().map(\.id))
         store.update(space) { state in
-            let gone = state.order.filter { !windowManager.exists($0) }
+            let gone = state.order.filter { !manageable.contains($0) }
             for id in gone {
                 state.removeWindow(id)
             }

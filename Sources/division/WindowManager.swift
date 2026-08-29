@@ -126,11 +126,12 @@ final class WindowManager {
     }
 
     func window(id: WindowID) -> ManagedWindow? {
+        let layers = cgWindowLayers()
         for app in regularApplications() {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
             for element in windows(of: appElement) {
                 if windowIdentifier(for: element, pid: app.processIdentifier).map(WindowID.init) == id {
-                    return makeWindow(element, app: app)
+                    return makeWindow(element, app: app, layers: layers)
                 }
             }
         }
@@ -138,11 +139,12 @@ final class WindowManager {
     }
 
     func allWindows() -> [ManagedWindow] {
+        let layers = cgWindowLayers()
         var result: [ManagedWindow] = []
         for app in regularApplications() {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
             for element in windows(of: appElement) {
-                if let window = makeWindow(element, app: app) {
+                if let window = makeWindow(element, app: app, layers: layers) {
                     result.append(window)
                 }
             }
@@ -194,10 +196,6 @@ final class WindowManager {
             return false
         }
         return true
-    }
-
-    func exists(_ id: WindowID) -> Bool {
-        axWindow(id) != nil
     }
 
     /// True when AX reports the window size is not settable (dialogs, palettes, fixed-size popups).
@@ -295,15 +293,16 @@ final class WindowManager {
         let element = value as! AXUIElement
         let role = copyString(element, kAXRoleAttribute as CFString) ?? "?"
         let subrole = copyString(element, kAXSubroleAttribute as CFString) ?? "nil"
-        if !isStandardWindow(element) {
-            return (nil, role, subrole, error)
-        }
-        if let window = makeWindow(element, app: app) {
+        if let window = makeWindow(element, app: app, layers: cgWindowLayers()) {
             return (window, role, subrole, error)
         }
-        DivisionLog.event(
-            "_AXUIElementGetWindow failed app=\(app.localizedName ?? "?") bundle=\(app.bundleIdentifier ?? "nil") role=\(role) subrole=\(subrole) axError=\(error.rawValue)"
-        )
+        if looksLikeStandardWindow(role: role, subrole: subrole),
+           windowIdentifier(for: element, pid: app.processIdentifier) == nil
+        {
+            DivisionLog.event(
+                "_AXUIElementGetWindow failed app=\(app.localizedName ?? "?") bundle=\(app.bundleIdentifier ?? "nil") role=\(role) subrole=\(subrole) axError=\(error.rawValue)"
+            )
+        }
         return (nil, role, subrole, error)
     }
 
@@ -342,10 +341,7 @@ final class WindowManager {
         }
         let role = copyString(element, kAXRoleAttribute as CFString) ?? "?"
         let subrole = copyString(element, kAXSubroleAttribute as CFString) ?? "nil"
-        guard isStandardWindow(element) else {
-            return (nil, role, subrole, error)
-        }
-        return (makeWindow(element, app: app), role, subrole, error)
+        return (makeWindow(element, app: app, layers: cgWindowLayers()), role, subrole, error)
     }
 
     private func frontmostForeignWindowFromList() -> ManagedWindow? {
@@ -415,10 +411,17 @@ final class WindowManager {
         return nil
     }
 
-    private func makeWindow(_ element: AXUIElement, app: NSRunningApplication) -> ManagedWindow? {
-        guard isStandardWindow(element) else { return nil }
+    private func makeWindow(
+        _ element: AXUIElement,
+        app: NSRunningApplication,
+        layers: [CGWindowID: Int]
+    ) -> ManagedWindow? {
+        let role = copyString(element, kAXRoleAttribute as CFString) ?? "?"
+        let subrole = copyString(element, kAXSubroleAttribute as CFString)
+        guard looksLikeStandardWindow(role: role, subrole: subrole) else { return nil }
         guard let cgID = windowIdentifier(for: element, pid: app.processIdentifier) else { return nil }
         let title = copyString(element, kAXTitleAttribute as CFString) ?? ""
+        guard WindowEligibility.shouldTile(title: title, layer: layers[cgID]) else { return nil }
         let frame = cocoaFrame(of: element)
         return ManagedWindow(
             id: WindowID(cgID),
@@ -431,14 +434,27 @@ final class WindowManager {
     }
 
     /// Window role, excluding palettes / floating chrome / tooltips. Empty and AXUnknown subroles are allowed.
-    private func isStandardWindow(_ element: AXUIElement) -> Bool {
-        let role = copyString(element, kAXRoleAttribute as CFString)
+    private func looksLikeStandardWindow(role: String, subrole: String?) -> Bool {
         guard role == (kAXWindowRole as String) else { return false }
-        let subrole = copyString(element, kAXSubroleAttribute as CFString)
         if let subrole, excludedWindowSubroles.contains(subrole) {
             return false
         }
         return true
+    }
+
+    private func cgWindowLayers() -> [CGWindowID: Int] {
+        let options: CGWindowListOption = [.excludeDesktopElements]
+        guard let info = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return [:]
+        }
+        var layers: [CGWindowID: Int] = [:]
+        layers.reserveCapacity(info.count)
+        for entry in info {
+            guard let number = entry[kCGWindowNumber as String] as? NSNumber else { continue }
+            let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            layers[CGWindowID(number.uint32Value)] = layer
+        }
+        return layers
     }
 
     private func windowIdentifier(for element: AXUIElement, pid: pid_t) -> CGWindowID? {
